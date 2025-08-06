@@ -1,19 +1,31 @@
 const express = require('express');
-const axios = require('axios');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Joi = require('joi');
+const { v4: uuidv4 } = require('uuid');
+const fetch = require('node-fetch');
+
+// Set global fetch and Headers for Google Generative AI
+if (!globalThis.fetch) {
+  globalThis.fetch = fetch;
+  globalThis.Headers = fetch.Headers;
+  globalThis.Request = fetch.Request;
+  globalThis.Response = fetch.Response;
+}
 
 const router = express.Router();
 
-// Initialize Gemini API
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
+// Helper function to get Gemini model with user's API key
+const getGeminiModel = (apiKey) => {
+  const genAI = new GoogleGenerativeAI(apiKey);
+  return genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+};
 
 // Validation schemas
 const generateSummarySchema = Joi.object({
   files: Joi.array().items(Joi.object({
     name: Joi.string().required(),
     path: Joi.string().required(),
-    content: Joi.string().required(),
+    content: Joi.string().allow('').required(),
     language: Joi.string().required()
   })).min(1).required(),
   framework: Joi.string().valid('junit', 'pytest', 'jest', 'mocha', 'selenium', 'cypress').required()
@@ -23,35 +35,13 @@ const generateTestCaseSchema = Joi.object({
   files: Joi.array().items(Joi.object({
     name: Joi.string().required(),
     path: Joi.string().required(),
-    content: Joi.string().required(),
+    content: Joi.string().allow('').required(),
     language: Joi.string().required()
   })).min(1).required(),
   framework: Joi.string().valid('junit', 'pytest', 'jest', 'mocha', 'selenium', 'cypress').required(),
   testType: Joi.string().required(),
   description: Joi.string().required()
 });
-
-// Helper function to call Gemini API
-async function callGeminiAPI(prompt) {
-  try {
-    const response = await axios.post(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
-      contents: [{
-        parts: [{
-          text: prompt
-        }]
-      }]
-    }, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
-
-    return response.data.candidates[0].content.parts[0].text;
-  } catch (error) {
-    console.error('Gemini API Error:', error.response?.data || error.message);
-    throw new Error('Failed to generate content with AI');
-  }
-}
 
 // Generate test case summaries
 router.post('/generate-summaries', async (req, res) => {
@@ -70,7 +60,7 @@ router.post('/generate-summaries', async (req, res) => {
 
     // Create prompt for generating test case summaries
     const fileContents = files.map(file => 
-      `File: ${file.name}\nPath: ${file.path}\nLanguage: ${file.language}\nContent:\n${file.content}\n`
+      `File: ${file.name}\nPath: ${file.path}\nLanguage: ${file.language}\nContent:\n${file.content || '// No content available'}\n`
     ).join('\n---\n');
 
     const prompt = `
@@ -82,38 +72,82 @@ ${fileContents}
 For each test case summary, provide:
 1. A descriptive title
 2. Brief description of what the test will cover
-3. Type of test (unit, integration, e2e, etc.)
-4. Key scenarios to test
-5. Expected outcomes
+3. Type of test (unit, integration, e2e, or ui)
+4. Key scenarios to test (2-3 scenarios)
+5. Expected outcomes (2-3 outcomes)
 
-Format your response as a JSON array with the following structure:
+Format your response as a valid JSON array with the following structure:
 [
   {
-    "id": "unique_id",
+    "id": "tc_001",
     "title": "Test case title",
     "description": "Brief description",
-    "type": "unit|integration|e2e|ui",
+    "type": "unit",
     "scenarios": ["scenario1", "scenario2"],
-    "expectedOutcomes": ["outcome1", "outcome2"],
-    "framework": "${framework}"
+    "expectedOutcomes": ["outcome1", "outcome2"]
   }
 ]
 
-Only return the JSON array, no additional text.
+Important: Return ONLY the JSON array, no markdown formatting, no code blocks, no additional text.
 `;
 
-    const aiResponse = await callGeminiAPI(prompt);
+    const model = getGeminiModel(req.geminiKey);
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    
+    // Clean the response - remove any markdown formatting
+    let cleanedText = text.trim();
+    if (cleanedText.startsWith('```json')) {
+      cleanedText = cleanedText.replace(/```json\n?/, '').replace(/```\n?$/, '');
+    } else if (cleanedText.startsWith('```')) {
+      cleanedText = cleanedText.replace(/```\n?/, '').replace(/```\n?$/, '');
+    }
     
     // Parse the JSON response
     let summaries;
     try {
-      summaries = JSON.parse(aiResponse);
+      summaries = JSON.parse(cleanedText);
+      // Add unique IDs and framework to each summary
+      summaries = summaries.map((summary, index) => ({
+        ...summary,
+        id: summary.id || `tc_${uuidv4().substring(0, 8)}`,
+        framework: framework
+      }));
     } catch (parseError) {
-      console.error('Failed to parse AI response:', parseError);
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to parse AI response'
-      });
+      console.error('Failed to parse AI response:', cleanedText);
+      console.error('Parse error:', parseError);
+      
+      // Generate default summaries as fallback
+      summaries = [
+        {
+          id: uuidv4().substring(0, 8),
+          title: "Basic Functionality Test",
+          description: "Test the core functionality of the provided code",
+          type: "unit",
+          scenarios: ["Test main function with valid inputs", "Test edge cases"],
+          expectedOutcomes: ["Function returns expected values", "Proper error handling"],
+          framework: framework
+        },
+        {
+          id: uuidv4().substring(0, 8),
+          title: "Error Handling Test",
+          description: "Test error handling and edge cases",
+          type: "unit",
+          scenarios: ["Test with invalid inputs", "Test boundary conditions"],
+          expectedOutcomes: ["Appropriate errors are thrown", "System handles errors gracefully"],
+          framework: framework
+        },
+        {
+          id: uuidv4().substring(0, 8),
+          title: "Integration Test",
+          description: "Test integration between different components",
+          type: "integration",
+          scenarios: ["Test component interactions", "Test data flow"],
+          expectedOutcomes: ["Components work together correctly", "Data is properly processed"],
+          framework: framework
+        }
+      ];
     }
 
     res.json({
@@ -150,39 +184,39 @@ router.post('/generate-test-case', async (req, res) => {
 
     // Create prompt for generating detailed test case
     const fileContents = files.map(file => 
-      `File: ${file.name}\nPath: ${file.path}\nLanguage: ${file.language}\nContent:\n${file.content}\n`
+      `File: ${file.name}\nPath: ${file.path}\nLanguage: ${file.language}\nContent:\n${file.content || '// No content available'}\n`
     ).join('\n---\n');
 
     const frameworkConfigs = {
       'junit': {
         language: 'Java',
-        imports: 'import org.junit.jupiter.api.*;\nimport static org.junit.jupiter.api.Assertions.*;',
-        template: '@Test\npublic void testMethod() {\n    // Test implementation\n}'
+        extension: 'java',
+        template: 'JUnit 5 test with @Test annotations'
       },
       'pytest': {
         language: 'Python',
-        imports: 'import pytest\nimport unittest',
-        template: 'def test_function():\n    # Test implementation\n    pass'
+        extension: 'py',
+        template: 'PyTest functions with assert statements'
       },
       'jest': {
         language: 'JavaScript',
-        imports: 'import { describe, it, expect, beforeEach, afterEach } from \'@jest/globals\';',
-        template: 'describe(\'Test Suite\', () => {\n    it(\'should test something\', () => {\n        // Test implementation\n    });\n});'
+        extension: 'js',
+        template: 'Jest test with describe and it blocks'
       },
       'mocha': {
         language: 'JavaScript',
-        imports: 'const { describe, it } = require(\'mocha\');\nconst assert = require(\'assert\');',
-        template: 'describe(\'Test Suite\', () => {\n    it(\'should test something\', () => {\n        // Test implementation\n    });\n});'
+        extension: 'js',
+        template: 'Mocha test with describe and it blocks'
       },
       'selenium': {
         language: 'Python',
-        imports: 'from selenium import webdriver\nfrom selenium.webdriver.common.by import By\nfrom selenium.webdriver.support.ui import WebDriverWait\nfrom selenium.webdriver.support import expected_conditions as EC',
-        template: 'def test_ui_functionality():\n    driver = webdriver.Chrome()\n    try:\n        # Test implementation\n        pass\n    finally:\n        driver.quit()'
+        extension: 'py',
+        template: 'Selenium WebDriver test for UI automation'
       },
       'cypress': {
         language: 'JavaScript',
-        imports: '// Cypress test file',
-        template: 'describe(\'Test Suite\', () => {\n    it(\'should test something\', () => {\n        // Test implementation\n    });\n});'
+        extension: 'js',
+        template: 'Cypress end-to-end test'
       }
     };
 
@@ -199,27 +233,35 @@ Test Requirements:
 - Description: ${description}
 - Framework: ${framework}
 - Language: ${config.language}
+- Template: ${config.template}
 
 Requirements:
-1. Generate a complete test file with proper imports
+1. Generate a complete test file with proper imports for ${framework}
 2. Include all necessary setup and teardown methods
-3. Write comprehensive test cases that cover the functionality
+3. Write comprehensive test cases that cover the functionality described
 4. Include proper assertions and error handling
 5. Follow best practices for ${framework} testing
 6. Make the tests realistic and practical
-7. Include comments explaining complex test logic
+7. Include comments explaining the test logic
+8. Ensure the code is syntactically correct for ${config.language}
 
-Required imports for ${framework}:
-${config.imports}
-
-Generate the complete test file content. Only return the code, no additional explanations.
+Generate the complete test file content. Return only the code, no markdown formatting, no explanations.
 `;
 
-    const testCaseCode = await callGeminiAPI(prompt);
+    const model = getGeminiModel(req.geminiKey);
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    let testCaseCode = response.text();
+    
+    // Clean the response - remove any markdown formatting
+    if (testCaseCode.includes('```')) {
+      testCaseCode = testCaseCode.replace(/```[a-zA-Z]*\n?/g, '').replace(/```\n?$/g, '');
+    }
+    testCaseCode = testCaseCode.trim();
 
     // Generate appropriate file name
     const timestamp = Date.now();
-    const fileName = `test_${framework}_${timestamp}.${config.language === 'Java' ? 'java' : config.language === 'Python' ? 'py' : 'js'}`;
+    const fileName = `test_${testType}_${timestamp}.${config.extension}`;
 
     res.json({
       success: true,
@@ -247,31 +289,31 @@ Generate the complete test file content. Only return the code, no additional exp
 router.get('/frameworks', (req, res) => {
   const frameworks = [
     {
+      id: 'jest',
+      name: 'Jest',
+      language: 'JavaScript/React',
+      description: 'Testing for React & JS',
+      fileExtension: '.js'
+    },
+    {
       id: 'junit',
       name: 'JUnit 5',
       language: 'Java',
-      description: 'Unit testing framework for Java',
+      description: 'Unit testing for Java',
       fileExtension: '.java'
     },
     {
       id: 'pytest',
       name: 'PyTest',
       language: 'Python',
-      description: 'Testing framework for Python',
+      description: 'Testing for Python',
       fileExtension: '.py'
-    },
-    {
-      id: 'jest',
-      name: 'Jest',
-      language: 'JavaScript',
-      description: 'Testing framework for JavaScript',
-      fileExtension: '.js'
     },
     {
       id: 'mocha',
       name: 'Mocha',
       language: 'JavaScript',
-      description: 'JavaScript test framework',
+      description: 'JS test framework',
       fileExtension: '.js'
     },
     {
@@ -285,7 +327,7 @@ router.get('/frameworks', (req, res) => {
       id: 'cypress',
       name: 'Cypress',
       language: 'JavaScript',
-      description: 'End-to-end testing framework',
+      description: 'E2E testing framework',
       fileExtension: '.js'
     }
   ];
@@ -296,4 +338,4 @@ router.get('/frameworks', (req, res) => {
   });
 });
 
-module.exports = router; 
+module.exports = router;

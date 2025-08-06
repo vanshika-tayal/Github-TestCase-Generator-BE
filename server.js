@@ -7,9 +7,13 @@ require('dotenv').config();
 const githubRoutes = require('./routes/github');
 const testCaseRoutes = require('./routes/testCases');
 const aiRoutes = require('./routes/ai');
+const { router: configRouter, extractTokens } = require('./routes/config');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Trust proxy for rate limiting to work correctly
+app.set('trust proxy', 1);
 
 // Security middleware
 app.use(helmet());
@@ -43,7 +47,11 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Apply token extraction middleware to all API routes
+app.use('/api', extractTokens);
+
 // API routes
+app.use('/api/config', configRouter);
 app.use('/api/github', githubRoutes);
 app.use('/api/test-cases', testCaseRoutes);
 app.use('/api/ai', aiRoutes);

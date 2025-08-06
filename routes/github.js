@@ -4,10 +4,15 @@ const Joi = require('joi');
 
 const router = express.Router();
 
-// Initialize Octokit
-const octokit = new Octokit({
-  auth: process.env.GITHUB_ACCESS_TOKEN
-});
+// Helper function to get Octokit instance with user token
+const getOctokit = (token) => {
+  return new Octokit({
+    auth: token,
+    request: {
+      fetch: require('node-fetch')
+    }
+  });
+};
 
 // Validation schemas
 const repositorySchema = Joi.object({
@@ -36,6 +41,7 @@ const prSchema = Joi.object({
 // Get user repositories
 router.get('/repositories', async (req, res) => {
   try {
+    const octokit = getOctokit(req.githubToken);
     const { data: repos } = await octokit.rest.repos.listForAuthenticatedUser({
       sort: 'updated',
       per_page: 100
@@ -83,6 +89,7 @@ router.get('/files/:owner/:repo', async (req, res) => {
     const { owner, repo } = value;
     const path = req.query.path || '';
 
+    const octokit = getOctokit(req.githubToken);
     const { data: contents } = await octokit.rest.repos.getContent({
       owner,
       repo,
@@ -157,6 +164,7 @@ router.get('/file/:owner/:repo', async (req, res) => {
       });
     }
 
+    const octokit = getOctokit(req.githubToken);
     const { data: file } = await octokit.rest.repos.getContent({
       owner,
       repo,
@@ -205,6 +213,8 @@ router.post('/create-pr', async (req, res) => {
 
     const { owner, repo, branch, title, body, files } = value;
 
+    const octokit = getOctokit(req.githubToken);
+    
     // Create a new branch
     const timestamp = Date.now();
     const newBranch = `test-cases-${timestamp}`;
