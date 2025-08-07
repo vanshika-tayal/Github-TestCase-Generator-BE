@@ -1,7 +1,7 @@
 {
-  "name": "test-case-generator-backend",
+  "name": "gitforge-ai-backend",
   "version": "1.0.0",
-  "description": "Backend for Test Case Generator with GitHub Integration",
+  "description": "GitForge.AI Backend - AI-Powered Test Generation API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

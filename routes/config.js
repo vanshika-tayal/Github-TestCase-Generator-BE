@@ -3,8 +3,8 @@ const router = express.Router();
 
 // Store user-provided tokens in memory (in production, use a secure session store)
 let userConfig = {
-  githubToken: process.env.GITHUB_ACCESS_TOKEN,
-  geminiKey: process.env.GEMINI_API_KEY
+  githubToken: null,
+  geminiKey: null
 };
 
 // Middleware to extract tokens from headers
@@ -12,9 +12,26 @@ const extractTokens = (req, res, next) => {
   const githubToken = req.headers['x-github-token'];
   const geminiKey = req.headers['x-gemini-key'];
   
-  // Use user-provided tokens if available, otherwise fall back to env vars
-  req.githubToken = githubToken || userConfig.githubToken || process.env.GITHUB_ACCESS_TOKEN;
-  req.geminiKey = geminiKey || userConfig.geminiKey || process.env.GEMINI_API_KEY;
+  // ONLY use user-provided tokens from headers (no fallback to .env)
+  req.githubToken = githubToken || userConfig.githubToken;
+  req.geminiKey = geminiKey || userConfig.geminiKey;
+  
+  // Check if tokens are provided for protected routes
+  if (req.path.includes('/github') && !req.githubToken) {
+    return res.status(401).json({
+      success: false,
+      error: 'GitHub token not configured',
+      message: 'Please configure your GitHub Personal Access Token in Settings'
+    });
+  }
+  
+  if (req.path.includes('/ai') && req.path !== '/ai/frameworks' && !req.geminiKey) {
+    return res.status(401).json({
+      success: false,
+      error: 'Gemini API key not configured',
+      message: 'Please configure your Google Gemini API key in Settings'
+    });
+  }
   
   next();
 };
