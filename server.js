@@ -27,11 +27,28 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // CORS configuration
+const corsOrigins = process.env.NODE_ENV === 'production' 
+  ? [
+      process.env.CORS_ORIGIN || 'https://gitforge-ai.vercel.app',
+      'https://gitforge-ai-frontend.vercel.app',
+      'https://gitforge.ai' // Add your custom domain if you have one
+    ]
+  : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? ['https://your-frontend-domain.com'] 
-    : ['http://localhost:3000'],
-  credentials: true
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (corsOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(null, false);
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
 }));
 
 // Body parsing middleware
