@@ -29,34 +29,14 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// CORS configuration for Vercel
-const allowedOrigins = [
-  'https://gitforge-ai.vercel.app',
-  'https://gitforge-ai-frontend.vercel.app',
-  'http://localhost:3000',
-  'http://127.0.0.1:3000'
-];
-
-// Add custom origins from environment
-if (process.env.CORS_ORIGIN) {
-  allowedOrigins.push(process.env.CORS_ORIGIN);
-}
-
+// CORS configuration - Allow all origins for now
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('vercel.app')) {
-      callback(null, true);
-    } else {
-      console.log('Blocked origin:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: true, // Accept all origins
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-GitHub-Token', 'X-Gemini-Key'],
+  exposedHeaders: ['Content-Length', 'Content-Type'],
+  maxAge: 86400, // Cache preflight for 24 hours
   optionsSuccessStatus: 200
 }));
 
